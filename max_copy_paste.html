@@ -1,0 +1,644 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Nothing is allowed to leave the page: no fetch, no XHR, no CDN, no fonts, no images. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; connect-src 'none'; media-src 'none'; frame-src 'none'; object-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'">
+<link rel="icon" href="data:,">
+<title>Копипаста</title>
+<style>
+  * { box-sizing: border-box; }
+
+  html, body { margin: 0; padding: 0; }
+
+  /* dark theme; one narrow column so a desktop page looks like a phone */
+  html {
+    color-scheme: dark;
+    background: #101418;
+  }
+
+  body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: 420px;
+    margin: 0 auto;
+    padding: 8px;
+    min-height: 100vh;
+    min-height: 100dvh;
+    font-family: ui-monospace, "DejaVu Sans Mono", "Liberation Mono", Consolas, monospace;
+    font-size: 16px;
+    line-height: 1.4;
+    background: #101418;
+    color: #d6dbe0;
+  }
+
+  /* --- tabs (top) and buttons (bottom) --- */
+
+  #tabs, #actions { display: flex; gap: 8px; }
+
+  button {
+    flex: 1 1 0;
+    min-height: 44px;
+    padding: 8px 4px;
+    font: inherit;
+    color: #d6dbe0;
+    background: #222b33;
+    border: 1px solid #4a5560;
+    cursor: pointer;
+  }
+
+  button:disabled {
+    color: #5a636b;
+    border-color: #3a434b;
+    cursor: default;
+  }
+
+  .tab.active {
+    background: #d6dbe0;
+    color: #101418;
+    border-color: #d6dbe0;
+  }
+
+  /* --- the large text field in the center --- */
+
+  .field {
+    flex: 1 1 auto;
+    width: 100%;
+    min-height: 120px;
+    padding: 8px;
+    font: inherit;
+    background: #1c232a;
+    border: 1px solid #4a5560;
+    resize: none;
+  }
+
+  /* every field has its own text colour: key - red, message - white, cypher - green */
+  #field-key { color: #ff6b6b; }
+  #field-msg { color: #f5f7fa; }
+  #field-cipher { color: #6fdc8c; }
+
+  #field-key::placeholder { color: #8f4a4a; }
+  #field-msg::placeholder { color: #6b7680; }
+  #field-cipher::placeholder { color: #456b52; }
+
+  .hidden { display: none; }
+
+  /* --- status line with the progress spinner --- */
+
+  #status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 20px;
+    font-size: 14px;
+    color: #98a2ac;
+  }
+
+  #spin {
+    display: none;
+    flex: 0 0 auto;
+    width: 14px;
+    height: 14px;
+    border: 2px solid #3a434b;
+    border-top-color: #d6dbe0;
+    border-radius: 50%;
+  }
+
+  #spin.on {
+    display: block;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div id="tabs">
+  <button id="tab-key" class="tab" type="button">Ключ</button>
+  <button id="tab-msg" class="tab" type="button">Сообщение</button>
+  <button id="tab-cipher" class="tab" type="button">Шифр</button>
+</div>
+
+<textarea id="field-key" class="field" spellcheck="false" placeholder="Ключ: 64 hex-символа (4 строки по 4 группы)"></textarea>
+<textarea id="field-msg" class="field" spellcheck="false" placeholder="Введите сообщение..."></textarea>
+<textarea id="field-cipher" class="field" spellcheck="false" placeholder="Вставьте шифротекст..."></textarea>
+
+<div id="status">
+  <span id="spin"></span>
+  <span id="status-text"></span>
+</div>
+
+<div id="actions">
+  <button id="btn-key-save" type="button">Перезаписать ключ</button>
+  <button id="btn-reset" type="button">Начать сначала</button>
+  <button id="btn-encrypt" type="button">Зашифровать</button>
+  <button id="btn-copy-msg" type="button">Копировать</button>
+  <button id="btn-decrypt" type="button">Расшифровать</button>
+  <button id="btn-copy-cipher" type="button">Копировать</button>
+</div>
+
+<script>
+  // =====================================================================
+  // Word tables
+  // =====================================================================
+
+  // 256 common russian words: the index of a word = one byte of the payload
+  const CYPHERBOOK = `
+  дом город улица окно дверь стол стул книга
+  слово дело время день ночь утро вечер год
+  месяц неделя час минута друг брат сестра мать
+  отец семья дети человек люди имя рука нога
+  голова глаз сердце голос письмо песня музыка картина
+  сад лес поле река море гора небо солнце
+  звезда луна дождь снег ветер облако земля вода
+  огонь камень путь дорога мост замок башня площадь
+  рынок школа работа игра смех тишина шум свет
+  тень цвет форма число счет деньги цена товар
+  сумка карман пальто шапка обувь платье карта поезд
+  автобус корабль станция вокзал билет чемодан птица зверь
+  конь собака кошка цветок дерево лист трава корень
+  плод ягода хлеб суп соль сахар говорить слушать
+  смотреть видеть знать думать помнить забыть читать писать
+  считать играть петь танцевать бежать идти ехать лететь
+  плыть нести держать брать давать класть найти терять
+  открывать закрывать начинать кончать делать мечтать ждать звать
+  отвечать спрашивать молчать кричать шептать смеяться плакать любить
+  верить сомневаться хотеть мочь уметь жить работать отдыхать
+  спать пить готовить стирать мыть строить ломать рисовать
+  шить вязать лечить учить помогать мешать беречь греть
+  светить блестеть падать поднимать тащить бросать ловить резать
+  варить жарить крутить клеить красить ставить двигать прятать
+  большой маленький длинный короткий широкий узкий глубокий высокий
+  низкий тяжелый теплый холодный горячий старый молодой новый
+  добрый злой тихий громкий ясный темный светлый белый
+  черный красный синий зеленый желтый яркий круглый квадратный
+  острый тупой сладкий соленый кислый горький мягкий твердый
+  гладкий пустой полный чистый грязный быстрый быстро медленно
+  тихо громко часто редко близко далеко рано поздно
+  легко трудно просто верно точно вчера сегодня завтра
+`.trim().split(/\s+/);
+
+  // 256 short service words and numerals: pure camouflage, dropped on decrypt
+  const NOISE = `
+  в во на по из за до от
+  со ко к у о об с без
+  над под перед через между около после при
+  про для и а но да же будто
+  чтобы если хотя пока когда ибо зато словно
+  либо лишь едва пускай коли кабы дабы притом
+  причем однако только бы ли не ни ведь
+  вот вон ну мол дескать типа якобы кое
+  я ты он она оно мы вы они
+  меня тебя его ее нас вас них мне
+  тебе ему ей нам вам им мой твой
+  наш ваш свой этот тот такой сам весь
+  другой любой каждый кто что который чей некий
+  некто нечто него нею ним ней нем ими
+  нами вами мной тобой собою ничего ничто никто
+  ничей всякий иной некоторый самый один два три
+  четыре пять шесть семь восемь девять десять одиннадцать
+  двенадцать тринадцать четырнадцать пятнадцать шестнадцать семнадцать восемнадцать девятнадцать
+  двадцать тридцать сорок пятьдесят шестьдесят семьдесят восемьдесят девяносто
+  сто двести триста четыреста пятьсот шестьсот семьсот восемьсот
+  девятьсот ноль тысяча миллион миллиард десяток дюжина сотня
+  полтора оба полтораста трое четверо пятеро шестеро семеро
+  восьмеро девятеро десятеро единица первый второй третий четвертый
+  пятый шестой седьмой восьмой девятый десятый одиннадцатый двенадцатый
+  двадцатый тридцатый сороковой пятидесятый сотый тысячный тринадцатый девяностый
+  там тут здесь везде нигде всюду отовсюду вдруг
+  опять снова почти даже еле чуть сразу тотчас
+  иногда впрочем например напрасно наскоро допустим итак значит
+  короче похоже видимо наверное бывает вскоре недавно давно
+  изредка вдобавок наоборот затем теперь тогда вмиг подчас
+  порой вместе вслед мгновенно позавчера нет ага ах
+  ой эх увы ох тьфу фу браво угу
+`.trim().split(/\s+/);
+
+  // =====================================================================
+  // Constants and small helpers
+  // =====================================================================
+
+  const LS_KEY = 'mcp.key.v1';   // localStorage slot for the symmetric key
+  const IV_LEN = 12;             // AES-GCM initialisation vector
+  const TAG_LEN = 16;            // AES-GCM authentication tag
+  const MIN_PAYLOAD = IV_LEN + TAG_LEN;
+  const KEY_BYTES = 32;          // AES-256
+  const NOISE_MAX = 2;           // 0..2 noise words per code word
+  const PROCESSING_MS = 800;     // how long the animation is shown
+
+  const $ = (id) => document.getElementById(id);
+  const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const randomOf = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+  function bytesToHex(bytes) {
+    let hex = '';
+    for (const b of bytes) hex += b.toString(16).padStart(2, '0');
+    return hex;
+  }
+
+  function hexToBytes(hex) {
+    const bytes = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+    return bytes;
+  }
+
+  // key on screen: 4 groups of 4 hex symbols per line
+  //
+  //   a3f1 c02b 9d4e 7712
+  //   00aa 5b3c d9e8 4f20
+  //   31c0 7e4a bb19 5d63
+  //   84fe 20a7 6cb4 0f91
+  function fmtKey(hex) {
+    const groups = hex.match(/.{1,4}/g) || [];
+    const lines = [];
+    for (let i = 0; i < groups.length; i += 4) lines.push(groups.slice(i, i + 4).join(' '));
+    return lines.join('\n');
+  }
+
+  // returns the key as 64 hex chars, or null if the text is not a valid key
+  function parseKeyHex(text) {
+    const s = String(text).toLowerCase().replace(/[\s-]+/g, '');
+    return /^[0-9a-f]{64}$/.test(s) ? s : null;
+  }
+
+  // =====================================================================
+  // Crypto: AES-GCM 256, payload = IV || ciphertext || tag
+  // =====================================================================
+
+  async function importAesKey(keyHex) {
+    return crypto.subtle.importKey('raw', hexToBytes(keyHex), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+  }
+
+  async function encryptPayload(keyHex, text) {
+    const iv = crypto.getRandomValues(new Uint8Array(IV_LEN));
+    const key = await importAesKey(keyHex);
+    const plain = new TextEncoder().encode(text);
+    const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv, tagLength: TAG_LEN * 8 }, key, plain));
+    const payload = new Uint8Array(iv.length + sealed.length);
+    payload.set(iv);
+    payload.set(sealed, iv.length);
+    return payload;
+  }
+
+  async function decryptPayload(keyHex, payload) {
+    const key = await importAesKey(keyHex);
+    const plain = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: payload.slice(0, IV_LEN), tagLength: TAG_LEN * 8 },
+      key,
+      payload.slice(IV_LEN)
+    );
+    return new TextDecoder('utf-8').decode(plain);
+  }
+
+  // =====================================================================
+  // Payload <-> look-alike text
+  // =====================================================================
+
+  const NOISE_SET = new Set(NOISE);
+  const CODE_INDEX = new Map();
+  CYPHERBOOK.forEach((word, index) => CODE_INDEX.set(word, index));
+
+  const END_PUNCT = ['.', '!', '?'];
+
+  // every payload byte becomes one code word, noise words slip in between
+  function payloadToText(payload) {
+    const tokens = [];
+    if (Math.random() < 0.5) tokens.push(randomOf(NOISE));
+    for (const byte of payload) {
+      tokens.push(CYPHERBOOK[byte]);
+      const noise = Math.floor(Math.random() * (NOISE_MAX + 1));
+      for (let i = 0; i < noise; i++) tokens.push(randomOf(NOISE));
+    }
+    return decorate(tokens);
+  }
+
+  // cosmetic layer: punctuation, line breaks, capitals at sentence starts
+  function decorate(tokens) {
+    let sentenceStart = true;
+    const parts = [];
+    const endsSentence = [];
+    for (const token of tokens) {
+      let word = sentenceStart ? token[0].toUpperCase() + token.slice(1) : token;
+      sentenceStart = false;
+      const r = Math.random();
+      if (r < 0.12) {
+        word += randomOf(END_PUNCT);
+        sentenceStart = true;
+        endsSentence.push(true);
+      } else if (r < 0.26) {
+        word += ',';
+        endsSentence.push(false);
+      } else if (r < 0.30) {
+        word += ';';
+        endsSentence.push(false);
+      } else if (r < 0.34) {
+        word += ' -';
+        endsSentence.push(false);
+      } else {
+        endsSentence.push(false);
+      }
+      parts.push(word);
+    }
+    // line breaks: mostly between sentences (paragraphs), rarely inside one
+    let text = parts[0];
+    for (let i = 1; i < parts.length; i++) {
+      const r = Math.random();
+      let sep = ' ';
+      if (endsSentence[i - 1]) {
+        if (r < 0.15) sep = '\n';
+        else if (r < 0.20) sep = '\n\n';
+      } else if (r < 0.01) {
+        sep = '\n';
+      }
+      text += sep + parts[i];
+    }
+    return text;
+  }
+
+  // reverse: strip punctuation, lowercase, drop noise words, words back to bytes
+  function textToPayload(text) {
+    const clean = String(text).toLowerCase().replace(/[^а-яa-z\s]/g, ' ').replace(/\s+/g, ' ').trim();
+    const tokens = clean === '' ? [] : clean.split(' ');
+    const bytes = [];
+    for (const token of tokens) {
+      if (NOISE_SET.has(token)) continue;
+      const index = CODE_INDEX.get(token);
+      if (index === undefined) throw new Error('not-cipher');
+      bytes.push(index);
+    }
+    if (bytes.length < MIN_PAYLOAD) throw new Error('not-cipher');
+    return new Uint8Array(bytes);
+  }
+
+  // =====================================================================
+  // UI state and rendering
+  // =====================================================================
+
+  // tabs: key | msg | cipher      modes: input | decrypted / encrypted
+  const state = { tab: 'msg', msgMode: 'input', cipherMode: 'input', busy: false, keyHex: '' };
+
+  const tabs = { key: $('tab-key'), msg: $('tab-msg'), cipher: $('tab-cipher') };
+  const fields = { key: $('field-key'), msg: $('field-msg'), cipher: $('field-cipher') };
+  const btnKeySave = $('btn-key-save');
+  const btnReset = $('btn-reset');
+  const btnEncrypt = $('btn-encrypt');
+  const btnCopyMsg = $('btn-copy-msg');
+  const btnDecrypt = $('btn-decrypt');
+  const btnCopyCipher = $('btn-copy-cipher');
+  const spin = $('spin');
+  const statusText = $('status-text');
+
+  function status(text) {
+    statusText.textContent = text;
+  }
+
+  function show(element, visible) {
+    element.classList.toggle('hidden', !visible);
+  }
+
+  function setTab(name) {
+    state.tab = name;
+    render();
+  }
+
+  function setBusy(busy, text) {
+    state.busy = busy;
+    spin.classList.toggle('on', busy);
+    status(text);
+    render();
+  }
+
+  // buttons change depending on the tab and on how a field got its content
+  function render() {
+    for (const name of ['key', 'msg', 'cipher']) {
+      tabs[name].classList.toggle('active', state.tab === name);
+      show(fields[name], state.tab === name);
+    }
+
+    show(btnKeySave, state.tab === 'key');
+    show(btnReset, state.tab !== 'key');
+
+    show(btnEncrypt, state.tab === 'msg');
+    show(btnCopyMsg, state.tab === 'msg' && state.msgMode === 'decrypted');
+    show(btnDecrypt, state.tab === 'cipher' && state.cipherMode === 'input');
+    show(btnCopyCipher, state.tab === 'cipher' && state.cipherMode === 'encrypted');
+
+    const msgEmpty = fields.msg.value.trim() === '';
+    const cipherEmpty = fields.cipher.value.trim() === '';
+    btnEncrypt.disabled = state.busy || state.msgMode === 'decrypted' || msgEmpty;
+    btnDecrypt.disabled = state.busy || cipherEmpty;
+    btnCopyMsg.disabled = state.busy;
+    btnCopyCipher.disabled = state.busy;
+    btnKeySave.disabled = state.busy;
+    btnReset.disabled = state.busy;
+  }
+
+  // =====================================================================
+  // Key storage (localStorage, with an in-memory fallback)
+  // =====================================================================
+
+  function loadStoredKey() {
+    try {
+      return parseKeyHex(localStorage.getItem(LS_KEY) || '');
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function storeKey(keyHex) {
+    try {
+      localStorage.setItem(LS_KEY, keyHex);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function randomKeyHex() {
+    return bytesToHex(crypto.getRandomValues(new Uint8Array(KEY_BYTES)));
+  }
+
+  // =====================================================================
+  // Clipboard
+  // =====================================================================
+
+  async function copyToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch (e) {
+        // fall through to the legacy path
+      }
+    }
+    const helper = document.createElement('textarea');
+    helper.value = text;
+    helper.setAttribute('readonly', '');
+    helper.style.position = 'fixed';
+    helper.style.top = '-1000px';
+    document.body.appendChild(helper);
+    helper.select();
+    let ok = false;
+    try {
+      ok = document.execCommand('copy');
+    } catch (e) {
+      ok = false;
+    }
+    document.body.removeChild(helper);
+    return ok;
+  }
+
+  function flash(button) {
+    const original = button.textContent;
+    button.textContent = 'Скопировано';
+    setTimeout(() => {
+      button.textContent = original;
+      render();
+    }, 1500);
+  }
+
+  // =====================================================================
+  // Actions
+  // =====================================================================
+
+  // "Перезаписать ключ": save the field as the key, empty field -> new random key
+  btnKeySave.addEventListener('click', () => {
+    const raw = fields.key.value.trim();
+    let keyHex;
+    if (raw === '') {
+      keyHex = randomKeyHex();
+    } else {
+      keyHex = parseKeyHex(raw);
+      if (keyHex === null) {
+        status('Ключ должен содержать 64 hex-символа (0-9, a-f)');
+        return;
+      }
+    }
+    fields.key.value = fmtKey(keyHex);
+    state.keyHex = keyHex;
+    status(storeKey(keyHex) ? 'Ключ сохранён' : 'Хранилище недоступно, ключ живёт только в памяти');
+    render();
+  });
+
+  // "Зашифровать": message -> look-alike text, switch to the Шифр tab
+  btnEncrypt.addEventListener('click', async () => {
+    if (state.busy) return;
+    setBusy(true, 'Шифрование...');
+    try {
+      const payload = await encryptPayload(state.keyHex, fields.msg.value);
+      const text = payloadToText(payload);
+      await delay(PROCESSING_MS);
+      fields.cipher.value = text;
+      state.cipherMode = 'encrypted';
+      setTab('cipher');
+      setBusy(false, '');
+    } catch (e) {
+      setBusy(false, 'Не удалось зашифровать');
+    }
+  });
+
+  // "Расшифровать": look-alike text -> message, switch to the Сообщение tab
+  btnDecrypt.addEventListener('click', async () => {
+    if (state.busy) return;
+    setBusy(true, 'Расшифрование...');
+    try {
+      const payload = textToPayload(fields.cipher.value);
+      const text = await decryptPayload(state.keyHex, payload);
+      await delay(PROCESSING_MS);
+      fields.msg.value = text;
+      state.msgMode = 'decrypted';
+      setTab('msg');
+      setBusy(false, '');
+    } catch (e) {
+      const message = e && e.message === 'not-cipher'
+        ? 'Похоже, это не шифротекст или он повреждён'
+        : 'Не удалось расшифровать (неверный ключ?)';
+      setBusy(false, message);
+    }
+  });
+
+  // "Начать сначала": clear both working fields, buttons back to the start
+  // (the key is kept - it is the user's secret, not a scratch field)
+  btnReset.addEventListener('click', () => {
+    if (state.busy) return;
+    fields.msg.value = '';
+    fields.cipher.value = '';
+    state.msgMode = 'input';
+    state.cipherMode = 'input';
+    setTab('msg');
+    status('');
+    render();
+  });
+
+  btnCopyMsg.addEventListener('click', async () => {
+    const ok = await copyToClipboard(fields.msg.value);
+    if (ok) flash(btnCopyMsg);
+    else status('Скопируйте текст вручную');
+    render();
+  });
+
+  btnCopyCipher.addEventListener('click', async () => {
+    const ok = await copyToClipboard(fields.cipher.value);
+    if (ok) flash(btnCopyCipher);
+    else status('Скопируйте текст вручную');
+    render();
+  });
+
+  // typing into a field puts it back into "input" mode
+  fields.msg.addEventListener('input', () => {
+    state.msgMode = 'input';
+    render();
+  });
+
+  fields.cipher.addEventListener('input', () => {
+    state.cipherMode = 'input';
+    render();
+  });
+
+  for (const name of ['key', 'msg', 'cipher']) {
+    tabs[name].addEventListener('click', () => setTab(name));
+  }
+
+  // =====================================================================
+  // Startup
+  // =====================================================================
+
+  function selfCheckTables() {
+    if (CYPHERBOOK.length !== 256 || NOISE.length !== 256) return false;
+    const all = new Set(CYPHERBOOK.concat(NOISE));
+    if (all.size !== 512) return false;
+    for (const word of all) {
+      if (!/^[а-я]+$/.test(word)) return false;
+    }
+    return true;
+  }
+
+  function init() {
+    if (!selfCheckTables()) {
+      status('Таблицы слов повреждены');
+    }
+    if (typeof crypto === 'undefined' || !crypto.subtle) {
+      status('Web Crypto недоступен: откройте страницу через https или file://');
+    }
+
+    const stored = loadStoredKey();
+    if (stored) {
+      state.keyHex = stored;
+      fields.key.value = fmtKey(stored);
+      setTab('msg');
+    } else {
+      state.keyHex = randomKeyHex();
+      fields.key.value = fmtKey(state.keyHex);
+      if (!storeKey(state.keyHex)) status('Хранилище недоступно, ключ живёт только в памяти');
+      setTab('key');
+    }
+    render();
+  }
+
+  init();
+</script>
+</body>
+</html>
