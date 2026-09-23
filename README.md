@@ -94,6 +94,9 @@ If anything goes wrong, the status line under the field tells you what happened:
 
 - `Начать сначала` clears both working fields and puts the buttons back to their starting
   state. It never touches the key.
+- The message is capped at 100 symbols; the status bar shows the count (`[30 / 100] символов`).
+  The cypher text is not capped.
+- The status bar shows the tool version (`Версия ПО: 1.00`) on the **Ключ** tab.
 - Use a different key for a different person if you want to be able to revoke one
   conversation without losing the other.
 - Losing the key means losing the messages; sharing the key means sharing the messages.

@@ -112,6 +112,12 @@
   }
 
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* right end of the status line: message counter or the app version */
+  #status-info {
+    margin-left: auto;
+    white-space: nowrap;
+  }
 </style>
 </head>
 <body>
@@ -123,12 +129,13 @@
 </div>
 
 <textarea id="field-key" class="field" spellcheck="false" placeholder="Ключ: 64 hex-символа (4 строки по 4 группы)"></textarea>
-<textarea id="field-msg" class="field" spellcheck="false" placeholder="Введите сообщение..."></textarea>
+<textarea id="field-msg" class="field" spellcheck="false" maxlength="100" placeholder="Введите сообщение..."></textarea>
 <textarea id="field-cipher" class="field" spellcheck="false" placeholder="Вставьте шифротекст..."></textarea>
 
 <div id="status">
   <span id="spin"></span>
   <span id="status-text"></span>
+  <span id="status-info"></span>
 </div>
 
 <div id="actions">
@@ -228,6 +235,8 @@
   const KEY_BYTES = 32;          // AES-256
   const NOISE_RATE = 0.25;       // chance of a noise word in each gap -> ~20% noise words
   const PROCESSING_MS = 800;     // how long the animation is shown
+  const VERSION = '1.00';        // shown in the status bar on the Ключ tab
+  const MAX_MSG = 100;           // max message length in symbols
 
   const $ = (id) => document.getElementById(id);
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -389,6 +398,7 @@
   const btnCopyCipher = $('btn-copy-cipher');
   const spin = $('spin');
   const statusText = $('status-text');
+  const statusInfo = $('status-info');
 
   function status(text) {
     statusText.textContent = text;
@@ -424,6 +434,15 @@
     show(btnCopyMsg, state.tab === 'msg' && state.msgMode === 'decrypted');
     show(btnDecrypt, state.tab === 'cipher' && state.cipherMode === 'input');
     show(btnCopyCipher, state.tab === 'cipher' && state.cipherMode === 'encrypted');
+
+    // right end of the status line: version on the Ключ tab, symbol count on Сообщение
+    if (state.tab === 'key') {
+      statusInfo.textContent = 'Версия ПО: ' + VERSION;
+    } else if (state.tab === 'msg') {
+      statusInfo.textContent = '[' + [...fields.msg.value].length + ' / ' + MAX_MSG + '] символов';
+    } else {
+      statusInfo.textContent = '';
+    }
 
     const msgEmpty = fields.msg.value.trim() === '';
     const cipherEmpty = fields.cipher.value.trim() === '';
@@ -588,6 +607,9 @@
 
   // typing into a field puts it back into "input" mode
   fields.msg.addEventListener('input', () => {
+    // hard cap on the message: symbols past MAX_MSG are cut off as they arrive
+    const symbols = [...fields.msg.value];
+    if (symbols.length > MAX_MSG) fields.msg.value = symbols.slice(0, MAX_MSG).join('');
     state.msgMode = 'input';
     render();
   });
